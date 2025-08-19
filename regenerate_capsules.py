@@ -16,6 +16,7 @@ import sys
 import argparse
 import logging
 import json
+import re
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -117,54 +118,72 @@ class CapsuleRegenerator:
         }
         
         try:
-            lines = script_content.split('\n')
-            current_section = None
-            current_content = []
-            
-            for line in lines:
-                line = line.strip()
+            # Pour les scripts avec structure markdown (# sections)
+            if '\n# ' in script_content:
+                lines = script_content.split('\n')
+                current_section = None
+                current_content = []
                 
-                if line.startswith('# '):
-                    # Nouveau titre/section
-                    if current_section:
-                        script_data[current_section] = '\n'.join(current_content).strip()
+                for line in lines:
+                    line_stripped = line.strip()
                     
-                    title_text = line[2:].strip()
-                    if 'introduction' in title_text.lower():
-                        current_section = 'introduction'
-                    elif 'développement' in title_text.lower() or 'developpement' in title_text.lower():
-                        current_section = 'development'
-                    elif 'conclusion' in title_text.lower():
-                        current_section = 'conclusion'
-                    elif 'quiz' in title_text.lower() or 'qcm' in title_text.lower():
-                        current_section = 'quiz'
+                    if line_stripped.startswith('# '):
+                        # Nouveau titre/section
+                        if current_section:
+                            script_data[current_section] = '\n'.join(current_content).strip()
+                        
+                        title_text = line_stripped[2:].strip()
+                        if 'introduction' in title_text.lower():
+                            current_section = 'introduction'
+                        elif 'développement' in title_text.lower() or 'developpement' in title_text.lower():
+                            current_section = 'development'
+                        elif 'conclusion' in title_text.lower():
+                            current_section = 'conclusion'
+                        elif 'quiz' in title_text.lower() or 'qcm' in title_text.lower():
+                            current_section = 'quiz'
+                        else:
+                            script_data['title'] = title_text
+                            current_section = None
+                        
+                        current_content = []
+                    
+                    elif line_stripped.startswith('## ') and current_section == 'quiz':
+                        # Question de quiz
+                        if current_content:
+                            script_data['quiz'].append('\n'.join(current_content).strip())
+                        current_content = [line]
+                    
                     else:
-                        script_data['title'] = title_text
-                        current_section = None
-                    
-                    current_content = []
+                        if current_section:
+                            current_content.append(line)
                 
-                elif line.startswith('## ') and current_section == 'quiz':
-                    # Question de quiz
-                    if current_content:
+                # Ajouter le dernier contenu
+                if current_section and current_content:
+                    if current_section == 'quiz':
                         script_data['quiz'].append('\n'.join(current_content).strip())
-                    current_content = [line]
-                
-                else:
-                    if current_section:
-                        current_content.append(line)
+                    else:
+                        script_data[current_section] = '\n'.join(current_content).strip()
             
-            # Ajouter le dernier contenu
-            if current_section and current_content:
-                if current_section == 'quiz':
-                    script_data['quiz'].append('\n'.join(current_content).strip())
-                else:
-                    script_data[current_section] = '\n'.join(current_content).strip()
+            else:
+                # Pour les scripts sans structure markdown claire
+                # Utiliser tout le contenu non-QCM comme development
+                
+                # Séparer le contenu principal des QCM
+                parts = re.split(r'={3,}\s*QCM\s+\d+\s*={3,}', script_content, flags=re.IGNORECASE)
+                main_content = parts[0] if parts else script_content
+                
+                # Nettoyer le contenu principal
+                main_content = main_content.strip()
+                
+                # Le mettre dans development
+                script_data['development'] = main_content
+                script_data['script'] = script_content  # Garder le script complet pour le PDF
         
         except Exception as e:
             logger.warning(f"Erreur lors du parsing du script: {str(e)}")
             # Fallback: utiliser tout le contenu comme développement
             script_data['development'] = script_content
+            script_data['script'] = script_content
         
         return script_data
     

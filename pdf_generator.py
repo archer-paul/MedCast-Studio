@@ -284,12 +284,39 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
         script = re.sub(r'textbf\{[^}]*\}', '', script)  # Supprimer tous les textbf{...}
         script = re.sub(r'\\textbf\{[^}]*\}', '', script)  # Supprimer tous les \textbf{...}
         
-        # Séparer le contenu principal des QCM de manière plus robuste
-        parts = re.split(r'={3,}\s*QCM\s+\d+\s*={3,}', script, flags=re.IGNORECASE)
-        main_content = parts[0] if parts else script
+        # Approche simple : identifier et extraire chaque QCM complet individuellement
+        qcm_data_for_boxes = []
+        main_content = script
         
-        # Récupérer les QCM séparément
-        qcm_matches = list(re.finditer(r'={3,}\s*QCM\s+(\d+)\s*={3,}\s*\n\n(.*?)(?=\n\n={3,}|$)', script, re.DOTALL | re.IGNORECASE))
+        # Trouver tous les QCM avec une regex simple
+        qcm_starts = list(re.finditer(r'={3,}\s*QCM\s+(\d+)\s*={3,}', script, re.IGNORECASE))
+        
+        # Traiter chaque QCM individuellement en partant de la fin
+        for i in reversed(range(len(qcm_starts))):
+            match = qcm_starts[i]
+            qcm_num = match.group(1)
+            start_pos = match.start()
+            
+            # Trouver la fin de ce QCM (début du suivant ou fin du script)
+            if i + 1 < len(qcm_starts):
+                end_pos = qcm_starts[i + 1].start()
+            else:
+                end_pos = len(script)
+            
+            # Extraire tout le contenu du QCM
+            full_qcm_section = script[start_pos:end_pos].strip()
+            
+            # Extraire seulement la partie QCM (de SITUATION à EXPLICATION inclue)
+            qcm_content = self._extract_just_qcm_part(full_qcm_section)
+            if qcm_content:
+                qcm_data_for_boxes.append((qcm_num, qcm_content))
+            
+            # Supprimer seulement le QCM pur du contenu principal, garder le reste
+            remaining_content = self._extract_non_qcm_part(full_qcm_section)
+            main_content = main_content[:start_pos] + remaining_content + main_content[end_pos:]
+        
+        # Inverser pour remettre dans l'ordre
+        qcm_data_for_boxes.reverse()
         
         # Traiter le contenu principal
         formatted_content = ""
@@ -318,13 +345,11 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
                 formatted_content += paragraph + "\n\n"
             
             # Insérer un QCM après certains paragraphes
-            if (qcm_inserted < len(qcm_matches) and 
+            if (qcm_inserted < len(qcm_data_for_boxes) and 
                 i > 0 and 
-                (i + 1) % max(1, len(paragraphs) // (len(qcm_matches) + 1)) == 0):
+                (i + 1) % max(1, len(paragraphs) // (len(qcm_data_for_boxes) + 1)) == 0):
                 
-                match = qcm_matches[qcm_inserted]
-                qcm_num = match.group(1)
-                qcm_content = match.group(2)
+                qcm_num, qcm_content = qcm_data_for_boxes[qcm_inserted]
                 
                 formatted_content += "\\vspace{0.5cm}\n"
                 formatted_content += "\\begin{qcmbox}\n"
@@ -334,10 +359,8 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
                 qcm_inserted += 1
         
         # Ajouter les QCM restants à la fin
-        while qcm_inserted < len(qcm_matches):
-            match = qcm_matches[qcm_inserted]
-            qcm_num = match.group(1)
-            qcm_content = match.group(2)
+        while qcm_inserted < len(qcm_data_for_boxes):
+            qcm_num, qcm_content = qcm_data_for_boxes[qcm_inserted]
             
             formatted_content += "\\vspace{0.5cm}\n"
             formatted_content += "\\begin{qcmbox}\n"
@@ -348,11 +371,110 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
         
         return formatted_content.strip()
     
+    def _extract_just_qcm_part(self, full_section: str) -> str:
+        """Extrait seulement la partie QCM pure (SITUATION à EXPLICATION inclue)"""
+        lines = full_section.split('\n')
+        qcm_lines = []
+        in_qcm = False
+        
+        for line in lines:
+            line_stripped = line.strip()
+            
+            # Commencer dès SITUATION:
+            if line_stripped.upper().startswith('SITUATION:'):
+                in_qcm = True
+            
+            if in_qcm:
+                qcm_lines.append(line)
+                
+                # Arrêter après EXPLICATION: et sa description
+                if line_stripped.upper().startswith('EXPLICATION:'):
+                    # Continuer pour récupérer le texte de l'explication
+                    continue
+                elif (line_stripped.startswith('**') and line_stripped.endswith('**')) and 'EXPLICATION' in '\n'.join(qcm_lines):
+                    # On a atteint une nouvelle section après l'explication, arrêter
+                    qcm_lines.pop()  # Enlever cette ligne qui ne fait pas partie du QCM
+                    break
+        
+        return '\n'.join(qcm_lines).strip()
+    
+    def _extract_non_qcm_part(self, full_section: str) -> str:
+        """Extrait le contenu non-QCM (tout ce qui vient après l'explication)"""
+        lines = full_section.split('\n')
+        non_qcm_lines = []
+        past_qcm = False
+        found_explanation = False
+        
+        for line in lines:
+            line_stripped = line.strip()
+            
+            # Marquer qu'on a trouvé l'explication
+            if line_stripped.upper().startswith('EXPLICATION:'):
+                found_explanation = True
+                continue
+            
+            # Si on a trouvé l'explication et qu'on arrive à une nouvelle section, récupérer le reste
+            if found_explanation and (line_stripped.startswith('**') and line_stripped.endswith('**')):
+                past_qcm = True
+            
+            # Collecter tout ce qui vient après le QCM
+            if past_qcm:
+                non_qcm_lines.append(line)
+        
+        result = '\n'.join(non_qcm_lines).strip()
+        return '\n' + result + '\n' if result else ''
+    
+    def _extract_remaining_content(self, qcm_text: str) -> str:
+        """Extrait le contenu qui suit l'explication QCM (pour le remettre dans le cours)"""
+        if not qcm_text:
+            return ""
+        
+        lines = qcm_text.split('\n')
+        remaining_lines = []
+        explanation_found = False
+        explanation_complete = False
+        
+        for line in lines:
+            # Si on trouve l'explication, marquer comme trouvée
+            if line.upper().strip().startswith('EXPLICATION:'):
+                explanation_found = True
+                continue
+            
+            # Si on a trouvé l'explication, chercher où elle se termine
+            if explanation_found and not explanation_complete:
+                line_stripped = line.strip()
+                
+                # Si c'est une ligne vide ou qui continue l'explication, passer
+                if (not line_stripped or 
+                    not line_stripped.startswith(('**', 'Point ', 'En résumé', 'Le non-respect', 'L\'archivage', 
+                                                 'Les patients disposent', 'RÉPONSE CORRECTE', 'SITUATION:', 'QUESTION:'))) and \
+                   not re.match(r'^[A-D]\)', line_stripped):
+                    continue
+                else:
+                    # L'explication est terminée, commencer à collecter le contenu de cours
+                    explanation_complete = True
+            
+            # Si l'explication est complète, collecter tout le reste
+            if explanation_complete:
+                remaining_lines.append(line)
+        
+        # Nettoyer et retourner seulement s'il y a du contenu significatif
+        remaining_text = '\n'.join(remaining_lines).strip()
+        
+        # Filtrer les lignes vides ou les artifacts
+        if remaining_text and len(remaining_text) > 20:  # Augmenter le seuil
+            return '\n' + remaining_text + '\n'  # Ajouter des espaces pour le formatage
+        
+        return ""
+    
     def _format_qcm_simple(self, qcm_text: str) -> str:
         """Formate un QCM de manière simple"""
         
         if not qcm_text:
             return ""
+        
+        # Enlever la ligne === QCM X === si présente
+        qcm_text = re.sub(r'^={3,}\s*QCM\s+\d+\s*={3,}\s*\n*', '', qcm_text, flags=re.IGNORECASE | re.MULTILINE)
         
         # Nettoyer le texte des artefacts
         qcm_text = re.sub(r'\\textbackslash\s*', ' ', qcm_text)
@@ -393,19 +515,21 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
             elif re.match(r'^[A-D]\)', line, re.IGNORECASE):
                 option_text = line[2:].strip()
                 options.append(option_text)
+                current_section = "options"  # Réinitialiser la section courante
             elif line.upper().startswith(('REPONSE CORRECTE:', 'RÉPONSE CORRECTE:')):
                 correct_answer = re.split(r':', line, 1)[1].strip()
+                current_section = "answer"  # Réinitialiser la section courante
             elif line.upper().startswith('EXPLICATION:'):
                 current_section = "explanation"
                 explanation = line[12:].strip()
             else:
-                # Continuer la section en cours
+                # Continuer la section en cours seulement pour situation et question
                 if current_section == "situation" and situation:
                     situation += " " + line
                 elif current_section == "question" and question:
                     question += " " + line
-                elif current_section == "explanation" and explanation:
-                    explanation += " " + line
+                # Pour l'explication, ne pas continuer avec les lignes suivantes
+                # car elles font partie du cours normal
         
         # Construire le QCM formaté
         if situation:
