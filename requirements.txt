@@ -1,0 +1,23 @@
+# Dépendances principales pour le générateur de capsules
+google-generativeai>=0.3.0
+google-cloud-texttospeech>=2.16.0
+
+# Traitement des fichiers Excel
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# Extraction de contenu web
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+urllib3>=2.0.0
+
+# Génération PDF avec LaTeX (optionnel)
+# Si LaTeX n'est pas installé, le programme utilisera reportlab
+reportlab>=4.0.0
+
+# Traitement audio (optionnel, pour assemblage audio)
+pydub>=0.25.0
+
+# Utilitaires
+pathlib2>=2.3.0; python_version < "3.4"
+python-dotenv>=1.0.0
