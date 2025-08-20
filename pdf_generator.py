@@ -307,27 +307,40 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
                 qcm_lines = [line]  # Inclure la ligne === QCM X ===
                 i += 1
                 
-                # Collecter jusqu'à la fin de l'EXPLICATION
+                # Collecter jusqu'à la fin de l'EXPLICATION (limitée)
                 found_explanation = False
+                explanation_line_count = 0
+                
                 while i < len(full_script_lines):
                     current_line = full_script_lines[i].strip()
-                    qcm_lines.append(full_script_lines[i])
                     
                     if current_line.upper().startswith('EXPLICATION:'):
                         found_explanation = True
+                        qcm_lines.append(full_script_lines[i])
+                        explanation_line_count = 1
                         i += 1
                         continue
                     
-                    # Après l'explication, arrêter au prochain titre ou QCM
-                    if found_explanation and (
-                        (current_line.startswith('**') and current_line.endswith('**')) or
-                        current_line.startswith('===') or
-                        i == len(full_script_lines) - 1
-                    ):
-                        # Si c'est un nouveau titre/QCM, ne pas l'inclure
-                        if not (i == len(full_script_lines) - 1):
-                            qcm_lines.pop()
-                        break
+                    # Si on est dans l'explication
+                    if found_explanation:
+                        # Arrêter l'explication si on trouve une ligne vide ou un nouveau titre/QCM
+                        if (not current_line or 
+                            current_line.startswith('**') or 
+                            current_line.startswith('===') or
+                            current_line.upper().startswith(('POINT ', 'TRANSITION'))):
+                            break
+                        
+                        # Continuer à collecter l'explication (mais pas indéfiniment)
+                        qcm_lines.append(full_script_lines[i])
+                        explanation_line_count += 1
+                        
+                        # Limiter l'explication à 3 lignes maximum après "EXPLICATION:"
+                        if explanation_line_count >= 3:
+                            i += 1
+                            break
+                    else:
+                        # Avant l'explication, tout collecter
+                        qcm_lines.append(full_script_lines[i])
                     
                     i += 1
                 
@@ -393,11 +406,16 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
                 # Paragraphe normal
                 formatted_content += paragraph + "\n\n"
             
-            # Insérer un QCM après certains paragraphes
-            if (qcm_inserted < len(qcm_data_for_boxes) and 
-                i > 0 and 
-                (i + 1) % max(1, len(paragraphs) // (len(qcm_data_for_boxes) + 1)) == 0):
-                
+            # Insérer un QCM après certains paragraphes (logique améliorée)
+            # Ne pas insérer de QCM immédiatement après un titre
+            should_insert_qcm = (
+                qcm_inserted < len(qcm_data_for_boxes) and 
+                i > 2 and  # Attendre au moins 3 paragraphes
+                not (paragraph.startswith('**') and paragraph.endswith('**')) and  # Pas juste après un titre
+                (i + 1) >= (qcm_inserted + 1) * (len(paragraphs) // max(1, len(qcm_data_for_boxes)))
+            )
+            
+            if should_insert_qcm:
                 qcm_num, qcm_content = qcm_data_for_boxes[qcm_inserted]
                 
                 formatted_content += "\\vspace{0.5cm}\n"
@@ -428,26 +446,44 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
         lines = qcm_text.split('\n')
         qcm_lines = []
         explanation_found = False
+        empty_lines_after_explanation = 0
         
         for line in lines:
             stripped_line = line.strip()
             
-            # Si on trouve l'explication, la prendre mais arrêter après
+            # Si on trouve l'explication, la prendre
             if stripped_line.upper().startswith('EXPLICATION:'):
                 explanation_found = True
                 qcm_lines.append(line)
                 continue
             
-            # Si on a déjà trouvé l'explication et qu'on tombe sur du contenu de cours, arrêter
+            # Si on a déjà trouvé l'explication 
             if explanation_found:
-                # Arrêter si on trouve un titre de cours ou du contenu qui n'est pas de l'explication
-                if (stripped_line.startswith(('**', 'Point ', 'En résumé', 'Le non-respect', 'L\'archivage', 
-                                            'Les patients disposent', 'Transition')) or
+                # Si ligne vide, compter mais ajouter (peut faire partie de l'explication)
+                if not stripped_line:
+                    empty_lines_after_explanation += 1
+                    qcm_lines.append(line)
+                    # Arrêter après 2 lignes vides consécutives
+                    if empty_lines_after_explanation >= 2:
+                        break
+                    continue
+                else:
+                    # Reset du compteur si on trouve du contenu
+                    empty_lines_after_explanation = 0
+                
+                # Arrêter si on trouve clairement un titre de cours ou transition
+                if (stripped_line.startswith(('**Point ', '**Transition', '**En résumé', '**Le non-respect', 
+                                            '**L\'archivage', '**Les patients disposent')) or
                     re.match(r'^={3,}.*QCM.*={3,}', stripped_line, re.IGNORECASE)):
                     break
-                # Continuer à collecter le texte d'explication seulement
-                if stripped_line and not stripped_line.startswith(('SITUATION:', 'QUESTION:', 'RÉPONSE CORRECTE:')):
+                    
+                # Continuer à collecter le texte d'explication seulement s'il ne ressemble pas à du cours
+                if not (stripped_line.startswith(('La première', 'Il est important', 'Imaginons', 
+                                                'Par exemple', 'De même', 'Au-delà', 'L\'archivage'))):
                     qcm_lines.append(line)
+                else:
+                    # Si ça ressemble à du contenu de cours, arrêter
+                    break
             else:
                 # Avant l'explication, prendre tout ce qui fait partie du QCM
                 qcm_lines.append(line)
