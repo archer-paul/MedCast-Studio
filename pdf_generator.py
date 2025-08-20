@@ -346,20 +346,21 @@ Cette capsule vous a presente les elements essentiels. La reglementation evolue 
             else:
                 i += 1
         
-        # Supprimer les QCM du contenu principal et les ajouter à la liste des bulles
+        # Créer une copie des lignes pour travailler
+        remaining_lines = full_script_lines.copy()
+        
+        # Supprimer les QCM du contenu principal (en commençant par la fin pour éviter les décalages d'indices)
         for block in reversed(qcm_blocks):
             qcm_data_for_boxes.append((block['num'], block['content']))
             
-            # Calculer les positions de caractères à supprimer
-            lines_before = full_script_lines[:block['start_line']]
-            lines_to_remove = full_script_lines[block['start_line']:block['end_line']]
-            lines_after = full_script_lines[block['end_line']:]
-            
-            # Reconstruire sans le QCM
-            main_content = '\n'.join(lines_before + lines_after)
+            # Supprimer les lignes du QCM
+            del remaining_lines[block['start_line']:block['end_line']]
         
-        # Inverser pour remettre dans l'ordre
+        # Inverser pour remettre les QCM dans l'ordre
         qcm_data_for_boxes.reverse()
+        
+        # Reconstruire le contenu principal sans les QCM
+        main_content = '\n'.join(remaining_lines)
         
         # Traiter le contenu principal
         formatted_content = ""
